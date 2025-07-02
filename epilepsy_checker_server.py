@@ -1,6 +1,6 @@
 # epilepsy_checker_server.py
 # This server uses Flask, yt-dlp, and OpenCV to analyze YouTube videos.
-# VERSION 2: Includes more nuanced frequency analysis based on clinical data.
+# VERSION 3: Includes more explicit CORS policy for robust deployment.
 #
 # To run this server:
 # 1. Install necessary libraries:
@@ -22,17 +22,19 @@ import traceback
 
 # --- Setup ---
 app = Flask(__name__)
-CORS(app) # Allow requests from the frontend HTML file
+
+# --- FIX for potential CORS issues in cloud environments ---
+# This configuration is more explicit than the previous version.
+# It tells the server to specifically allow requests to the /analyze
+# endpoint from any origin (*).
+CORS(app, resources={r"/analyze": {"origins": "*"}})
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- Analysis Parameters ---
-# These values are based on established guidelines for photosensitive epilepsy triggers.
-# Increased frame rate for more accurate frequency detection.
 FRAME_RATE = 30
 LUMINANCE_CHANGE_THRESHOLD = 20
-# Frequency (Hz) based limits.
 MODERATE_RISK_HZ_LOWER_BOUND = 3
 HIGH_RISK_HZ_LOWER_BOUND = 16
 RED_FLASH_SENSITIVITY = 1.2
@@ -42,7 +44,6 @@ RED_FLASH_SENSITIVITY = 1.2
 def analyze_video_url(video_url):
     """
     Main function to download and analyze a video from a URL.
-    This is the robust version that handles errors and cleans up files.
     """
     ydl_opts = {
         'format': 'best[ext=mp4][height<=480]/best[height<=480]',
@@ -99,7 +100,6 @@ def analyze_video_file(filepath):
         source_fps = 30
         logging.warning("Video has 0 FPS metadata, assuming 30 FPS.")
 
-    # We now analyze at a higher FRAME_RATE defined globally
     frame_skip = int(source_fps / FRAME_RATE) if source_fps > FRAME_RATE else 1
     
     frame_count = 0
@@ -141,24 +141,20 @@ def analyze_video_file(filepath):
     duration = frame_count / source_fps
     cap.release()
     
-    # --- NEW: More sophisticated post-analysis processing ---
     timestamps = []
     for i, frame in enumerate(frame_data):
         one_second_ago = frame["time"] - 1
         frames_in_last_second = [f for f in frame_data if f["time"] >= one_second_ago and f["time"] <= frame["time"]]
         flash_count_in_last_second = sum(1 for f in frames_in_last_second if f["flash"])
 
-        # Check for High-Risk Frequency (e.g., 16-30 Hz)
         if flash_count_in_last_second > HIGH_RISK_HZ_LOWER_BOUND:
             if not any(t['time'] > one_second_ago for t in timestamps if "Flash Rate" in t['type']):
                  timestamps.append({"time": frame["time"], "type": f"High-Risk Flash Rate ({HIGH_RISK_HZ_LOWER_BOUND+1}-30 Hz)"})
         
-        # Check for Moderate-Risk Frequency (e.g., 3-15 Hz)
         elif flash_count_in_last_second > MODERATE_RISK_HZ_LOWER_BOUND:
             if not any(t['time'] > one_second_ago for t in timestamps if "Flash Rate" in t['type']):
                  timestamps.append({"time": frame["time"], "type": f"Moderate Flash Rate ({MODERATE_RISK_HZ_LOWER_BOUND+1}-{HIGH_RISK_HZ_LOWER_BOUND} Hz)"})
 
-        # Check for Red Flashes (as before)
         if frame["red_flash"]:
              if not any(abs(t['time'] - frame['time']) < 1 for t in timestamps if t['type'] == 'Red Flash Sequence'):
                 timestamps.append({"time": frame["time"], "type": "Red Flash Sequence"})
